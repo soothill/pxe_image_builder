@@ -23,7 +23,7 @@ fi
 if command -v apt &> /dev/null; then
     info "Detected Debian-based system (apt)."
     apt update
-    apt install -y wget xorriso squashfs-tools rsync createrepo-c
+    apt install -y wget xorriso squashfs-tools rsync createrepo-c kmod
 elif command -v dnf &> /dev/null; then
     info "Detected Fedora-based system (dnf)."
     dnf install -y wget xorriso squashfs-tools rsync createrepo_c

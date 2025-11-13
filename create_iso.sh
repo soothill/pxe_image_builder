@@ -51,16 +51,8 @@ setup_workspace() {
     info "Setting up the workspace..."
     mkdir -p "$WORKDIR" "$ISO_MOUNT_DIR" "$CUSTOM_ISO_DIR"
 
-    info "Mounting the original ISO..."
-    sudo modprobe iso9660
-    if ! mountpoint -q "$ISO_MOUNT_DIR"; then
-        sudo mount -o loop "$ISO_FILENAME" "$ISO_MOUNT_DIR"
-    fi
-
-    info "Copying ISO contents to the custom directory..."
-    rsync -av --progress "$ISO_MOUNT_DIR/" "$CUSTOM_ISO_DIR/"
-
-    sudo umount "$ISO_MOUNT_DIR"
+    info "Extracting the original ISO..."
+    xorriso -osirrox on -indev "$ISO_FILENAME" -extract / "$CUSTOM_ISO_DIR"
     info "Workspace is ready."
 }
 
@@ -301,10 +293,12 @@ update_iso_filesystem() {
 
 
     info "Unpacking the filesystem..."
+    sudo rm -rf "$squashfs_root"
     mkdir -p "$squashfs_root"
     sudo unsquashfs -d "$squashfs_root" "$squashfs_file"
 
     info "Preparing chroot environment..."
+    sudo mkdir -p "$squashfs_root/proc" "$squashfs_root/dev" "$squashfs_root/sys"
     sudo mount --bind /proc "$squashfs_root/proc"
     sudo mount --bind /dev "$squashfs_root/dev"
     sudo mount --bind /sys "$squashfs_root/sys"
