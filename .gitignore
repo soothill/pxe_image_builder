@@ -1,0 +1,6 @@
+# Sensitive files
+credentials.txt
+
+# Build artifacts
+build/
+*.iso
