@@ -25,9 +25,21 @@ if ! command -v zypper &> /dev/null; then
 fi
 
 # Install dependencies
-info "Installing PXE boot server dependencies..."
-zypper refresh
-zypper install -y tftp dhcp-server syslinux
+info "Checking for PXE boot server dependencies..."
+packages_to_install=""
+for pkg in tftp dhcp-server syslinux; do
+    if ! rpm -q "$pkg" &> /dev/null; then
+        packages_to_install="$packages_to_install $pkg"
+    fi
+done
+
+if [ -n "$packages_to_install" ]; then
+    info "Installing missing dependencies:${packages_to_install}"
+    zypper refresh
+    zypper install -y $packages_to_install
+else
+    info "All dependencies are already installed."
+fi
 
 # Configure TFTP server
 info "Configuring TFTP server..."
