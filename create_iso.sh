@@ -172,10 +172,26 @@ ln -s /dev/\$smallest_disk /dev/install_disk
 #!/bin/bash
 # Fetch SSH keys and perform updates.
 
-# Wait for network to be available
-while ! ping -c 1 www.opensuse.org; do
-  sleep 1
+# Wait for network connectivity with a bounded retry loop
+NETWORK_CHECK_TARGET="\${NETWORK_CHECK_TARGET:-https://download.opensuse.org}"
+NETWORK_CHECK_MAX_ATTEMPTS="\${NETWORK_CHECK_MAX_ATTEMPTS:-30}"
+NETWORK_CHECK_SLEEP_SECONDS="\${NETWORK_CHECK_SLEEP_SECONDS:-5}"
+
+attempt=1
+while [ \$attempt -le \$NETWORK_CHECK_MAX_ATTEMPTS ]; do
+  if curl --silent --head --connect-timeout 5 --max-time 10 "\$NETWORK_CHECK_TARGET" >/dev/null 2>&1; then
+    echo "[INFO] Network connectivity confirmed to \$NETWORK_CHECK_TARGET"
+    break
+  fi
+
+  echo "[INFO] Waiting for network connectivity (attempt \$attempt/\$NETWORK_CHECK_MAX_ATTEMPTS)..."
+  sleep "\$NETWORK_CHECK_SLEEP_SECONDS"
+  attempt=\$((attempt + 1))
 done
+
+if [ \$attempt -gt \$NETWORK_CHECK_MAX_ATTEMPTS ]; then
+  echo "[WARN] Unable to confirm network connectivity to \$NETWORK_CHECK_TARGET after \$NETWORK_CHECK_MAX_ATTEMPTS attempts." >&2
+fi
 
 function fetch_keys() {
     local user=\$1
