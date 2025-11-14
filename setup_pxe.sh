@@ -53,13 +53,58 @@ fi
 # Configure DHCP server
 info "Configuring DHCP server..."
 
-# Prompt for network details
-read -p "Enter the subnet (e.g., 10.10.100.0): " subnet
-read -p "Enter the netmask (e.g., 255.255.255.0): " netmask
-read -p "Enter the start of the IP range for leases (e.g., 10.10.100.150): " range_start
-read -p "Enter the end of the IP range for leases (e.g., 10.10.100.200): " range_end
-read -p "Enter the router/gateway IP address (e.g., 10.10.100.1): " router_ip
+# Function to convert CIDR prefix to a netmask
+cidr_to_netmask() {
+    local cidr=$1
+    local netmask=""
+    local i
+    for ((i=0; i<4; i++)); do
+        local n=0
+        if [ $cidr -ge 8 ]; then
+            n=255
+            cidr=$((cidr - 8))
+        elif [ $cidr -gt 0 ]; then
+            n=$((256 - (1 << (8 - cidr))))
+            cidr=0
+        fi
+        netmask="${netmask}${n}"
+        [ $i -lt 3 ] && netmask="${netmask}."
+    done
+    echo "$netmask"
+}
+
+# Prompt for the server's IP address
 read -p "Please enter the IP address of this PXE server: " server_ip
+
+# Auto-detect network configuration from the provided IP
+interface_info=$(ip -o -4 addr show | grep "inet ${server_ip}/")
+if [ -z "$interface_info" ]; then
+    error "Could not find an interface with the IP address ${server_ip}"
+fi
+
+dhcp_interface=$(echo "$interface_info" | awk '{print $2}')
+cidr=$(echo "$interface_info" | awk '{print $4}' | cut -d'/' -f2)
+
+netmask=$(cidr_to_netmask "$cidr")
+
+# Calculate subnet
+IFS=. read -r i1 i2 i3 i4 <<< "$server_ip"
+IFS=. read -r m1 m2 m3 m4 <<< "$netmask"
+subnet=$(printf "%d.%d.%d.%d" "$((i1 & m1))" "$((i2 & m2))" "$((i3 & m3))" "$((i4 & m4))")
+
+info "Detected the following network configuration:"
+info "Interface: ${dhcp_interface}"
+info "IP Address: ${server_ip}"
+info "Netmask: ${netmask}"
+info "Subnet: ${subnet}"
+
+# Prompt for remaining details with sane defaults
+read -p "Enter the start of the IP range for leases [${subnet%.*}.150]: " range_start
+range_start=${range_start:-${subnet%.*}.150}
+read -p "Enter the end of the IP range for leases [${subnet%.*}.200]: " range_end
+range_end=${range_end:-${subnet%.*}.200}
+read -p "Enter the router/gateway IP address [${subnet%.*}.1]: " router_ip
+router_ip=${router_ip:-${subnet%.*}.1}
 
 cat > /etc/dhcpd.conf <<EOF
 default-lease-time 600;
@@ -76,8 +121,8 @@ subnet ${subnet} netmask ${netmask} {
 }
 EOF
 
-# Prompt for the network interface and configure it for openSUSE
-read -p "Please enter the network interface for the DHCP server (e.g., eth0): " dhcp_interface
+# Configure DHCPD_INTERFACE for openSUSE
+info "Configuring DHCP interface in /etc/sysconfig/dhcpd..."
 echo "DHCPD_INTERFACE=\"${dhcp_interface}\"" > /etc/sysconfig/dhcpd
 
 systemctl restart dhcpd
