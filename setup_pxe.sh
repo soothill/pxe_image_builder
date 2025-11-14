@@ -19,31 +19,40 @@ if [ "$EUID" -ne 0 ]; then
   error "Please run this script with sudo or as root."
 fi
 
-# Check for Debian/Ubuntu
-if ! command -v apt &> /dev/null; then
-    error "This script is designed for Debian/Ubuntu-based systems. Please adapt it for your distribution."
+# Check for openSUSE
+if ! command -v zypper &> /dev/null; then
+    error "This script is designed for openSUSE-based systems. Please adapt it for your distribution."
 fi
 
 # Install dependencies
 info "Installing PXE boot server dependencies..."
-apt update
-apt install -y tftpd-hpa isc-dhcp-server
+zypper refresh
+zypper install -y tftp dhcp-server syslinux
 
 # Configure TFTP server
 info "Configuring TFTP server..."
-TFTP_DIR="/srv/tftp"
+TFTP_DIR="/srv/tftpboot"
 mkdir -p "$TFTP_DIR"
-cat > /etc/default/tftpd-hpa <<EOF
-TFTP_USERNAME="tftp"
+# On openSUSE, TFTP is often managed by xinetd or as a socket-activated service.
+# We will enable the tftp service.
+# The default directory is /srv/tftpboot.
+cat > /etc/sysconfig/tftp <<EOF
 TFTP_DIRECTORY="$TFTP_DIR"
-TFTP_ADDRESS=":69"
 TFTP_OPTIONS="--secure"
+TFTP_ADDRESS=":69"
 EOF
-systemctl restart tftpd-hpa
+
+# Use tftp.socket for modern openSUSE systems
+if systemctl list-unit-files | grep -q 'tftp.socket'; then
+    systemctl restart tftp.socket
+else
+    systemctl restart tftp
+fi
+
 
 # Configure DHCP server
 info "Configuring DHCP server..."
-cat > /etc/dhcp/dhcpd.conf <<EOF
+cat > /etc/dhcpd.conf <<EOF
 default-lease-time 600;
 max-lease-time 7200;
 authoritative;
@@ -59,9 +68,9 @@ EOF
 
 # Prompt for the server IP
 read -p "Please enter the IP address of this server: " server_ip
-sed -i "s/next-server .*/next-server ${server_ip};/" /etc/dhcp/dhcpd.conf
+sed -i "s/next-server .*/next-server ${server_ip};/" /etc/dhcpd.conf
 
-systemctl restart isc-dhcp-server
+systemctl restart dhcpd
 
 # Copy ISO contents to TFTP server
 info "Copying ISO contents to TFTP server..."
@@ -88,12 +97,10 @@ LABEL openSUSE
 EOF
 
 # Install pxelinux.0
-if [ -f "/usr/lib/PXELINUX/pxelinux.0" ]; then
-    cp /usr/lib/PXELINUX/pxelinux.0 "$TFTP_DIR/"
-elif [ -f "/usr/lib/syslinux/modules/bios/pxelinux.0" ]; then
-    cp /usr/lib/syslinux/modules/bios/pxelinux.0 "$TFTP_DIR/"
+if [ -f "/usr/share/syslinux/pxelinux.0" ]; then
+    cp /usr/share/syslinux/pxelinux.0 "$TFTP_DIR/"
 else
-    error "Could not find pxelinux.0. Please install it or adjust the path."
+    error "Could not find pxelinux.0. Please ensure 'syslinux' is installed."
 fi
 
 
