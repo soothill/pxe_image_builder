@@ -264,8 +264,14 @@ validate_packages() {
         return
     fi
 
+    local squashfs_root="$1"
     local zypper_output
-    zypper_output=$(sudo chroot "$1" /usr/bin/zypper --non-interactive install --dry-run "${packages[@]}" 2>&1)
+
+    if ! command -v zypper >/dev/null 2>&1; then
+        error "zypper is not available on the host system; cannot validate packages."
+    fi
+
+    zypper_output=$(sudo zypper --root "$squashfs_root" --non-interactive install --dry-run "${packages[@]}" 2>&1)
     local zypper_status=$?
 
     local missing_packages=()
@@ -412,13 +418,14 @@ update_iso_filesystem() {
     validate_services "$squashfs_root"
 
     info "Updating repositories and packages inside chroot..."
-    sudo chroot "$squashfs_root" /bin/bash -c "
-        set -e
-        zypper --non-interactive refresh
-        zypper --non-interactive update -y
-        # Clean up zypper cache
-        zypper --non-interactive clean --all
-    "
+    if ! command -v zypper >/dev/null 2>&1; then
+        error "zypper is not available on the host system; cannot update packages inside chroot."
+    fi
+
+    sudo zypper --root "$squashfs_root" --non-interactive refresh
+    sudo zypper --root "$squashfs_root" --non-interactive update -y
+    # Clean up zypper cache
+    sudo zypper --root "$squashfs_root" --non-interactive clean --all
 
     info "Unmounting chroot environment..."
     cleanup_chroot_mounts
