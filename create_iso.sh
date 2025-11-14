@@ -23,6 +23,15 @@ error() {
     exit 1
 }
 
+cleanup_chroot_mounts() {
+    local path
+    for path in "$@"; do
+        if [ -n "$path" ] && mountpoint -q "$path" 2>/dev/null; then
+            sudo umount "$path"
+        fi
+    done
+}
+
 check_dependencies() {
     info "Checking for required dependencies..."
     local missing_deps=()
@@ -172,9 +181,29 @@ ln -s /dev/\$smallest_disk /dev/install_disk
 #!/bin/bash
 # Fetch SSH keys and perform updates.
 
-# Wait for network to be available
-while ! ping -c 1 www.opensuse.org; do
-  sleep 1
+# Wait for network to be available (with timeout and backoff)
+NETWORK_CHECK_URL="\${NETWORK_CHECK_URL:-https://download.opensuse.org}"
+max_attempts=20
+attempt=1
+wait_time=2
+while (( attempt <= max_attempts )); do
+  if curl --silent --head --connect-timeout 5 --max-time 10 "\$NETWORK_CHECK_URL" >/dev/null; then
+    break
+  fi
+
+  if (( attempt == max_attempts )); then
+    echo "Warning: Unable to confirm network connectivity after \${max_attempts} attempts, continuing." >&2
+    break
+  fi
+
+  sleep "\$wait_time"
+  if (( wait_time < 60 )); then
+    wait_time=\$(( wait_time * 2 ))
+    if (( wait_time > 60 )); then
+      wait_time=60
+    fi
+  fi
+  attempt=\$(( attempt + 1 ))
 done
 
 function fetch_keys() {
@@ -236,17 +265,33 @@ validate_packages() {
         return
     fi
 
-    local missing_packages=()
-    while IFS= read -r pkg; do
-        if [ -n "$pkg" ]; then
-            if ! sudo chroot "$1" /bin/bash -c "zypper --non-interactive se --exact $pkg" | grep -q "No packages found."; then
-                info "  - $pkg: OK"
-            else
-                info "  - $pkg: Not Found"
-                missing_packages+=("$pkg")
-            fi
+    local -a packages=()
+    mapfile -t packages < <( { grep -Ev '^\s*(#|$)' packages.txt || true; } )
+    if [ ${#packages[@]} -eq 0 ]; then
+        return
+    fi
+
+    local -a quoted_packages=()
+    local pkg
+    for pkg in "${packages[@]}"; do
+        quoted_packages+=("$(printf '%q' "$pkg")")
+    done
+
+    local zypper_cmd="zypper --non-interactive info -t package ${quoted_packages[*]}"
+    local output
+    if ! output=$(sudo chroot "$1" /bin/bash -c "$zypper_cmd" 2>&1); then
+        info "  zypper reported issues while validating packages; analyzing output for missing entries."
+    fi
+
+    local -a missing_packages=()
+    for pkg in "${packages[@]}"; do
+        if grep -Fq "Information for package ${pkg}:" <<<"$output"; then
+            info "  - $pkg: OK"
+        else
+            info "  - $pkg: Not Found"
+            missing_packages+=("$pkg")
         fi
-    done < packages.txt
+    done
 
     if [ ${#missing_packages[@]} -ne 0 ]; then
         error "The following packages are not available: ${missing_packages[*]}. Please correct packages.txt and try again."
@@ -259,17 +304,47 @@ validate_services() {
         return
     fi
 
-    local missing_services=()
-    while IFS= read -r service; do
-        if [ -n "$service" ]; then
-            if sudo chroot "$1" /bin/bash -c "systemctl list-unit-files --type=service | grep -q ${service}.service"; then
-                info "  - $service: OK"
-            else
-                info "  - $service: Not Found"
-                missing_services+=("$service")
+    local -a services=()
+    mapfile -t services < <( { grep -Ev '^\s*(#|$)' services.txt || true; } )
+    if [ ${#services[@]} -eq 0 ]; then
+        return
+    fi
+
+    local root="$1"
+    local -A available_services=()
+    local systemctl_output
+    if systemctl_output=$(sudo systemctl --root "$root" --no-legend --no-pager list-unit-files --type=service 2>/dev/null); then
+        while read -r unit _; do
+            [ -z "$unit" ] && continue
+            unit="${unit%.service}"
+            available_services["$unit"]=1
+        done <<< "$systemctl_output"
+    else
+        info "systemctl --root unavailable, falling back to service file scan."
+        local dir
+        for dir in "$root/usr/lib/systemd/system" "$root/etc/systemd/system" "$root/lib/systemd/system"; do
+            if [ -d "$dir" ]; then
+                while IFS= read -r file; do
+                    local unit
+                    unit=$(basename "$file")
+                    unit="${unit%.service}"
+                    [ -n "$unit" ] && available_services["$unit"]=1
+                done < <(sudo find "$dir" -type f -name '*.service' 2>/dev/null)
             fi
+        done
+    fi
+
+    local -a missing_services=()
+    local service
+    for service in "${services[@]}"; do
+        local normalized="${service%.service}"
+        if [[ -n "${available_services[$normalized]}" ]]; then
+            info "  - $service: OK"
+        else
+            info "  - $service: Not Found"
+            missing_services+=("$service")
         fi
-    done < services.txt
+    done
 
     if [ ${#missing_services[@]} -ne 0 ]; then
         error "The following services are not available: ${missing_services[*]}. Please correct services.txt and try again."
@@ -302,6 +377,7 @@ update_iso_filesystem() {
     sudo mount --bind /proc "$squashfs_root/proc"
     sudo mount --bind /dev "$squashfs_root/dev"
     sudo mount --bind /sys "$squashfs_root/sys"
+    trap "cleanup_chroot_mounts '$squashfs_root/proc' '$squashfs_root/dev' '$squashfs_root/sys'" EXIT INT TERM
 
     # Copy resolv.conf for network access inside chroot
     sudo cp /etc/resolv.conf "$squashfs_root/etc/resolv.conf"
@@ -320,9 +396,8 @@ update_iso_filesystem() {
     "
 
     info "Unmounting chroot environment..."
-    sudo umount "$squashfs_root/proc"
-    sudo umount "$squashfs_root/dev"
-    sudo umount "$squashfs_root/sys"
+    cleanup_chroot_mounts "$squashfs_root/proc" "$squashfs_root/dev" "$squashfs_root/sys"
+    trap - EXIT INT TERM
 
     info "Repacking the filesystem..."
     sudo mksquashfs "$squashfs_root" "$squashfs_file" -no-xattrs -comp xz
