@@ -130,8 +130,9 @@ systemctl restart dhcpd
 # Copy ISO contents to TFTP server
 info "Copying ISO contents to TFTP server..."
 ISO_FILE="openSUSE-Leap-15.6-Custom.iso"
-if [ ! -f "$ISO_FILE" ]; then
-    error "Custom ISO not found. Please run 'make build' first."
+# Check if the ISO file exists and is not empty
+if [ ! -s "$ISO_FILE" ]; then
+    error "Custom ISO not found or is empty. Please run 'make build' first."
 fi
 
 ISO_MOUNT_DIR="/mnt/iso"
