@@ -68,7 +68,7 @@ EOF
 
 # Prompt for the server IP
 read -p "Please enter the IP address of this server: " server_ip
-sed -i "s/next-server .*/next-server ${server_ip};/" /etc/dhcpd.conf
+sed -i "s/^\s*next-server .*/  next-server ${server_ip};/" /etc/dhcpd.conf
 
 systemctl restart dhcpd
 
