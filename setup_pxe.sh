@@ -52,23 +52,29 @@ fi
 
 # Configure DHCP server
 info "Configuring DHCP server..."
+
+# Prompt for network details
+read -p "Enter the subnet (e.g., 10.10.100.0): " subnet
+read -p "Enter the netmask (e.g., 255.255.255.0): " netmask
+read -p "Enter the start of the IP range for leases (e.g., 10.10.100.150): " range_start
+read -p "Enter the end of the IP range for leases (e.g., 10.10.100.200): " range_end
+read -p "Enter the router/gateway IP address (e.g., 10.10.100.1): " router_ip
+read -p "Please enter the IP address of this PXE server: " server_ip
+
 cat > /etc/dhcpd.conf <<EOF
 default-lease-time 600;
 max-lease-time 7200;
 authoritative;
+log-facility local7;
 
-subnet 192.168.1.0 netmask 255.255.255.0 {
-  range 192.168.1.100 192.168.1.200;
-  option routers 192.168.1.1;
+subnet ${subnet} netmask ${netmask} {
+  range ${range_start} ${range_end};
+  option routers ${router_ip};
   option domain-name-servers 8.8.8.8, 8.8.4.4;
   filename "pxelinux.0";
-  next-server 192.168.1.10; # Replace with your server's IP
+  next-server ${server_ip};
 }
 EOF
-
-# Prompt for the server IP
-read -p "Please enter the IP address of this server: " server_ip
-sed -i "s/^\s*next-server .*/  next-server ${server_ip};/" /etc/dhcpd.conf
 
 # Prompt for the network interface and configure it for openSUSE
 read -p "Please enter the network interface for the DHCP server (e.g., eth0): " dhcp_interface
