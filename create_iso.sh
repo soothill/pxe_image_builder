@@ -275,10 +275,62 @@ validate_services() {
         return
     fi
 
+    local squashfs_root="$1"
+    declare -A available_services=()
+    local service_list_obtained=false
+
+    if command -v systemctl >/dev/null 2>&1; then
+        local systemctl_output
+        if systemctl_output=$(sudo systemctl --root "$squashfs_root" --no-legend --no-pager list-unit-files --type=service 2>/dev/null); then
+            service_list_obtained=true
+            while IFS= read -r line; do
+                local unit_file="${line%% *}"
+                if [[ -z "$unit_file" || "$unit_file" != *.service ]]; then
+                    continue
+                fi
+                local base_unit="${unit_file%.service}"
+                available_services["$unit_file"]=1
+                available_services["$base_unit"]=1
+            done <<< "$systemctl_output"
+        fi
+    fi
+
+    if ! $service_list_obtained; then
+        local systemd_dir="$squashfs_root/usr/lib/systemd/system"
+        if [ -d "$systemd_dir" ]; then
+            while IFS= read -r service_path; do
+                local unit_file="$(basename "$service_path")"
+                local base_unit="${unit_file%.service}"
+                available_services["$unit_file"]=1
+                available_services["$base_unit"]=1
+            done < <(sudo find "$systemd_dir" -maxdepth 1 -type f -name '*.service' -print)
+            service_list_obtained=true
+        fi
+    fi
+
     local missing_services=()
-    while IFS= read -r service; do
+    while IFS= read -r service || [[ -n "$service" ]]; do
+        service="${service%%#*}"
+        service="${service#${service%%[![:space:]]*}}"
+        service="${service%${service##*[![:space:]]}}"
         if [ -n "$service" ]; then
-            if sudo chroot "$1" /bin/bash -c "systemctl list-unit-files --type=service | grep -q ${service}.service"; then
+            local found=false
+            local lookup_candidates=()
+            lookup_candidates+=("$service")
+            if [[ $service == *.service ]]; then
+                lookup_candidates+=("${service%.service}")
+            else
+                lookup_candidates+=("$service.service")
+            fi
+
+            for candidate in "${lookup_candidates[@]}"; do
+                if [[ -n "${available_services[$candidate]}" ]]; then
+                    found=true
+                    break
+                fi
+            done
+
+            if [ "$found" = true ]; then
                 info "  - $service: OK"
             else
                 info "  - $service: Not Found"
