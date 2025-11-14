@@ -70,6 +70,10 @@ EOF
 read -p "Please enter the IP address of this server: " server_ip
 sed -i "s/^\s*next-server .*/  next-server ${server_ip};/" /etc/dhcpd.conf
 
+# Prompt for the network interface and configure it for openSUSE
+read -p "Please enter the network interface for the DHCP server (e.g., eth0): " dhcp_interface
+echo "DHCPD_INTERFACE=\"${dhcp_interface}\"" > /etc/sysconfig/dhcpd
+
 systemctl restart dhcpd
 
 # Copy ISO contents to TFTP server
