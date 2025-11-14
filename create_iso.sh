@@ -252,20 +252,37 @@ validate_packages() {
         return
     fi
 
-    local missing_packages=()
+    local packages=()
     while IFS= read -r pkg; do
         if [ -n "$pkg" ]; then
-            if ! sudo chroot "$1" /bin/bash -c "zypper --non-interactive se --exact $pkg" | grep -q "No packages found."; then
-                info "  - $pkg: OK"
-            else
-                info "  - $pkg: Not Found"
-                missing_packages+=("$pkg")
-            fi
+            packages+=("$pkg")
         fi
     done < packages.txt
 
+    if [ ${#packages[@]} -eq 0 ]; then
+        info "No packages to validate."
+        return
+    fi
+
+    local zypper_output
+    zypper_output=$(sudo chroot "$1" /usr/bin/zypper --non-interactive install --dry-run "${packages[@]}" 2>&1)
+    local zypper_status=$?
+
+    local missing_packages=()
+    for pkg in "${packages[@]}"; do
+        if grep -q "Package '$pkg' not found." <<<"$zypper_output" || \
+           grep -q "No provider of '$pkg' found." <<<"$zypper_output"; then
+            info "  - $pkg: Not Found"
+            missing_packages+=("$pkg")
+        else
+            info "  - $pkg: OK"
+        fi
+    done
+
     if [ ${#missing_packages[@]} -ne 0 ]; then
         error "The following packages are not available: ${missing_packages[*]}. Please correct packages.txt and try again."
+    elif [ $zypper_status -ne 0 ]; then
+        error "zypper returned a non-zero exit status ($zypper_status). Output: $zypper_output"
     fi
 }
 
