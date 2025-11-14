@@ -388,6 +388,22 @@ update_iso_filesystem() {
     sudo mount --bind /dev "$squashfs_root/dev"
     sudo mount --bind /sys "$squashfs_root/sys"
 
+    cleanup_chroot_mounts() {
+        local mounts=(
+            "$squashfs_root/proc"
+            "$squashfs_root/dev"
+            "$squashfs_root/sys"
+        )
+
+        local mountpoint
+        for mountpoint in "${mounts[@]}"; do
+            if awk -v m="$mountpoint" '$2==m { exit 0 } END { exit 1 }' /proc/mounts; then
+                sudo umount "$mountpoint"
+            fi
+        done
+    }
+    trap cleanup_chroot_mounts EXIT ERR
+
     # Copy resolv.conf for network access inside chroot
     sudo cp /etc/resolv.conf "$squashfs_root/etc/resolv.conf"
 
@@ -405,9 +421,8 @@ update_iso_filesystem() {
     "
 
     info "Unmounting chroot environment..."
-    sudo umount "$squashfs_root/proc"
-    sudo umount "$squashfs_root/dev"
-    sudo umount "$squashfs_root/sys"
+    cleanup_chroot_mounts
+    trap - EXIT ERR
 
     info "Repacking the filesystem..."
     sudo mksquashfs "$squashfs_root" "$squashfs_file" -no-xattrs -comp xz
